@@ -11,16 +11,18 @@ else:
 import torch
 import esm
 from torch_geometric.utils import degree, add_self_loops, subgraph, to_undirected, remove_self_loops, coalesce
+from torch.cuda.amp import autocast
 
 import math
 
-def protein_init(seqs):
+def protein_init(seqs, args):
     result_dict = {}
     model_location = "esm2_t33_650M_UR50D"
     model, alphabet = esm.pretrained.load_model_and_alphabet(model_location)
     model.eval()
-    if torch.cuda.is_available():
+    if int(args.GPUs) >= 1:
         model = model.cuda()
+
     batch_converter = alphabet.get_batch_converter()
 
     for seq in tqdm(seqs):
@@ -179,9 +181,9 @@ def esm_extract(model, batch_converter, seq, layer=36, approach='mean',dim=2560)
         data.append((pro_id, seq))
         batch_labels, batch_strs, batch_tokens = batch_converter(data)
         batch_tokens = batch_tokens.to(next(model.parameters()).device, non_blocking=True)
-
-        with torch.no_grad():
-            results = model(batch_tokens, repr_layers=[i for i in range(1, layer + 1)], return_contacts=True)
+        with autocast():
+            with torch.no_grad():
+                results = model(batch_tokens, repr_layers=[i for i in range(1, layer + 1)], return_contacts=True)
 
         logits = results["logits"][0].cpu().numpy()[1: len(seq) + 1]
         contact_prob_map = results["contacts"][0].cpu().numpy()
@@ -226,8 +228,9 @@ def esm_extract(model, batch_converter, seq, layer=36, approach='mean',dim=2560)
             temp_data.append((pro_id, temp_seq))
             batch_labels, batch_strs, batch_tokens = batch_converter(temp_data)
             batch_tokens = batch_tokens.to(next(model.parameters()).device, non_blocking=True)
-            with torch.no_grad():
-                results = model(batch_tokens, repr_layers=[i for i in range(1, layer + 1)], return_contacts=True)
+            with autocast():
+                with torch.no_grad():
+                    results = model(batch_tokens, repr_layers=[i for i in range(1, layer + 1)], return_contacts=True)
 
             # insert into the global contact map
             row, col = np.where(contact_prob_map[start:end, start:end] != 0)
